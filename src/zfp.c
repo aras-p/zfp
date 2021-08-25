@@ -83,6 +83,11 @@ is_reversible(const zfp_stream* zfp)
 #include "template/cudadecompress.c"
 #undef Scalar
 
+#define Scalar uint16
+#include "template/compress.c"
+#include "template/decompress.c"
+#undef Scalar
+
 /* public functions: miscellaneous ----------------------------------------- */
 
 size_t
@@ -97,6 +102,8 @@ zfp_type_size(zfp_type type)
       return sizeof(float);
     case zfp_type_double:
       return sizeof(double);
+	case zfp_type_half:
+		return sizeof(int16);
     default:
       return 0;
   }
@@ -308,8 +315,8 @@ zfp_field_metadata(const zfp_field* field)
   }
   /* 2 bits for dimensionality (1D, 2D, 3D, 4D) */
   meta <<= 2; meta += zfp_field_dimensionality(field) - 1;
-  /* 2 bits for scalar type */
-  meta <<= 2; meta += field->type - 1;
+  /* 3 bits for scalar type */
+  meta <<= 3; meta += field->type - 1;
   return meta;
 }
 
@@ -327,7 +334,8 @@ zfp_field_set_type(zfp_field* field, zfp_type type)
     case zfp_type_int64:
     case zfp_type_float:
     case zfp_type_double:
-      field->type = type;
+	case zfp_type_half:
+		field->type = type;
       return type;
     default:
       return zfp_type_none;
@@ -413,7 +421,7 @@ zfp_field_set_metadata(zfp_field* field, uint64 meta)
   /* ensure value is in range */
   if (meta >> ZFP_META_BITS)
     return zfp_false;
-  field->type = (zfp_type)((meta & 0x3u) + 1); meta >>= 2;
+  field->type = (zfp_type)((meta & 0x7u) + 1); meta >>= 3;
   dims = (meta & 0x3u) + 1; meta >>= 2;
   switch (dims) {
     case 1:
@@ -717,6 +725,9 @@ zfp_stream_maximum_size(const zfp_stream* zfp, const zfp_field* field)
     case zfp_type_double:
       maxbits += reversible ? 1 + 1 + 11 + 6 : 1 + 11;
       break;
+	case zfp_type_half:
+      maxbits += reversible ? 1 + 1 + 5 + 4 : 1 + 5;
+      break;
     default:
       return 0;
   }
@@ -752,6 +763,9 @@ zfp_stream_set_rate(zfp_stream* zfp, double rate, zfp_type type, uint dims, zfp_
       break;
     case zfp_type_double:
       bits = MAX(bits, 1 + 11u);
+      break;
+	case zfp_type_half:
+      bits = MAX(bits, 1 + 5u);
       break;
     default:
       break;
@@ -1020,16 +1034,16 @@ size_t
 zfp_compress(zfp_stream* zfp, const zfp_field* field)
 {
   /* function table [execution][strided][dimensionality][scalar type] */
-  void (*ftable[3][2][4][4])(zfp_stream*, const zfp_field*) = {
+  void (*ftable[3][2][4][5])(zfp_stream*, const zfp_field*) = {
     /* serial */
-    {{{ compress_int32_1,         compress_int64_1,         compress_float_1,         compress_double_1 },
-      { compress_strided_int32_2, compress_strided_int64_2, compress_strided_float_2, compress_strided_double_2 },
-      { compress_strided_int32_3, compress_strided_int64_3, compress_strided_float_3, compress_strided_double_3 },
-      { compress_strided_int32_4, compress_strided_int64_4, compress_strided_float_4, compress_strided_double_4 }},
-     {{ compress_strided_int32_1, compress_strided_int64_1, compress_strided_float_1, compress_strided_double_1 },
-      { compress_strided_int32_2, compress_strided_int64_2, compress_strided_float_2, compress_strided_double_2 },
-      { compress_strided_int32_3, compress_strided_int64_3, compress_strided_float_3, compress_strided_double_3 },
-      { compress_strided_int32_4, compress_strided_int64_4, compress_strided_float_4, compress_strided_double_4 }}},
+    {{{ compress_int32_1,         compress_int64_1,         compress_float_1,         compress_double_1,         0 },
+      { compress_strided_int32_2, compress_strided_int64_2, compress_strided_float_2, compress_strided_double_2, compress_strided_uint16_2 },
+      { compress_strided_int32_3, compress_strided_int64_3, compress_strided_float_3, compress_strided_double_3, 0 },
+      { compress_strided_int32_4, compress_strided_int64_4, compress_strided_float_4, compress_strided_double_4, 0 }},
+     {{ compress_strided_int32_1, compress_strided_int64_1, compress_strided_float_1, compress_strided_double_1, 0 },
+      { compress_strided_int32_2, compress_strided_int64_2, compress_strided_float_2, compress_strided_double_2, compress_strided_uint16_2 },
+      { compress_strided_int32_3, compress_strided_int64_3, compress_strided_float_3, compress_strided_double_3, 0 },
+      { compress_strided_int32_4, compress_strided_int64_4, compress_strided_float_4, compress_strided_double_4, 0 }}},
 
     /* OpenMP */
 #ifdef _OPENMP
@@ -1070,6 +1084,7 @@ zfp_compress(zfp_stream* zfp, const zfp_field* field)
     case zfp_type_int64:
     case zfp_type_float:
     case zfp_type_double:
+	case zfp_type_half:
       break;
     default:
       return 0;
@@ -1091,16 +1106,16 @@ size_t
 zfp_decompress(zfp_stream* zfp, zfp_field* field)
 {
   /* function table [execution][strided][dimensionality][scalar type] */
-  void (*ftable[3][2][4][4])(zfp_stream*, zfp_field*) = {
+  void (*ftable[3][2][4][5])(zfp_stream*, zfp_field*) = {
     /* serial */
-    {{{ decompress_int32_1,         decompress_int64_1,         decompress_float_1,         decompress_double_1 },
-      { decompress_strided_int32_2, decompress_strided_int64_2, decompress_strided_float_2, decompress_strided_double_2 },
-      { decompress_strided_int32_3, decompress_strided_int64_3, decompress_strided_float_3, decompress_strided_double_3 },
-      { decompress_strided_int32_4, decompress_strided_int64_4, decompress_strided_float_4, decompress_strided_double_4 }},
-     {{ decompress_strided_int32_1, decompress_strided_int64_1, decompress_strided_float_1, decompress_strided_double_1 },
-      { decompress_strided_int32_2, decompress_strided_int64_2, decompress_strided_float_2, decompress_strided_double_2 },
-      { decompress_strided_int32_3, decompress_strided_int64_3, decompress_strided_float_3, decompress_strided_double_3 },
-      { decompress_strided_int32_4, decompress_strided_int64_4, decompress_strided_float_4, decompress_strided_double_4 }}},
+    {{{ decompress_int32_1,         decompress_int64_1,         decompress_float_1,         decompress_double_1,         0 },
+      { decompress_strided_int32_2, decompress_strided_int64_2, decompress_strided_float_2, decompress_strided_double_2, decompress_strided_uint16_2 },
+      { decompress_strided_int32_3, decompress_strided_int64_3, decompress_strided_float_3, decompress_strided_double_3, 0 },
+      { decompress_strided_int32_4, decompress_strided_int64_4, decompress_strided_float_4, decompress_strided_double_4, 0 }},
+     {{ decompress_strided_int32_1, decompress_strided_int64_1, decompress_strided_float_1, decompress_strided_double_1, 0 },
+      { decompress_strided_int32_2, decompress_strided_int64_2, decompress_strided_float_2, decompress_strided_double_2, decompress_strided_uint16_2 },
+      { decompress_strided_int32_3, decompress_strided_int64_3, decompress_strided_float_3, decompress_strided_double_3, 0 },
+      { decompress_strided_int32_4, decompress_strided_int64_4, decompress_strided_float_4, decompress_strided_double_4, 0 }}},
 
     /* OpenMP; not yet supported */
     {{{ NULL }}},
@@ -1130,6 +1145,7 @@ zfp_decompress(zfp_stream* zfp, zfp_field* field)
     case zfp_type_int64:
     case zfp_type_float:
     case zfp_type_double:
+	case zfp_type_half:
       break;
     default:
       return 0;

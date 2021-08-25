@@ -43,10 +43,10 @@
 
 /* number of bits per header entry */
 #define ZFP_MAGIC_BITS       32 /* number of magic word bits */
-#define ZFP_META_BITS        52 /* number of field metadata bits */
+#define ZFP_META_BITS        53 /* number of field metadata bits */
 #define ZFP_MODE_SHORT_BITS  12 /* number of mode bits in short format */
 #define ZFP_MODE_LONG_BITS   64 /* number of mode bits in long format */
-#define ZFP_HEADER_MAX_BITS 148 /* max number of header bits */
+#define ZFP_HEADER_MAX_BITS 149 /* max number of header bits */
 #define ZFP_MODE_SHORT_MAX  ((1u << ZFP_MODE_SHORT_BITS) - 2)
 
 /* rounding mode for reducing bias; see build option ZFP_ROUNDING_MODE */
@@ -129,7 +129,8 @@ typedef enum {
   zfp_type_int32  = 1, /* 32-bit signed integer */
   zfp_type_int64  = 2, /* 64-bit signed integer */
   zfp_type_float  = 3, /* single precision floating point */
-  zfp_type_double = 4  /* double precision floating point */
+  zfp_type_double = 4, /* double precision floating point */
+  zfp_type_half = 5    /* half precision floating point */
 } zfp_type;
 
 /* uncompressed array; use accessors to get/set members */
